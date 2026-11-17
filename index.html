@@ -14,7 +14,7 @@ p{max-width:640px;line-height:1.5;margin:4px;color:#caa}
 <p>One of you becomes the monster. Bigger, deeper-voiced, and hungry. Everyone else survives until the clock runs out.</p>
 <div><button id="bd">Play on desktop</button> <button id="bv">Enter VR</button></div>
 <p><b>Desktop:</b> WASD move, Space jump, mouse look, V third person. Left/right click = left/right hand grab. Hold F while grabbing to pull. E at the computer to type. 1/2/3 vote.<br>
-<b>VR:</b> push off surfaces with your hands to move. Grip or trigger grabs. Point at the computer screen and pull trigger.<br>
+<b>VR:</b> push off surfaces with your fists to move (gorilla style, long arms). Hold grip or trigger (or pinch) on a surface to grab it and climb hand over hand, let go to launch. Thumbstick = snap turn. Grip/trigger near a limb also grabs it. Point at the computer screen and pull trigger.<br>
 <b>Monster:</b> grab a limb, head, or body and pull away to rip it off. Carry what you tear off.</p></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -255,15 +255,45 @@ for(let i=0;i<2;i++){const c=renderer.xr.getController(i);rig.add(c);
  c.addEventListener('selectstart',()=>dn(true));c.addEventListener('squeezestart',()=>dn(false));c.addEventListener('selectend',up);c.addEventListener('squeezeend',up)}
 function begin(){ac();amb();document.getElementById('start').style.display='none';enterLobby();drawComp();clock.start()}
 document.getElementById('bd').onclick=()=>{begin();renderer.domElement.requestPointerLock()};
-document.getElementById('bv').onclick=()=>{if(!navigator.xr){alert('WebXR not available in this browser.');return}renderer.xr.setReferenceSpaceType('local-floor');navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local-floor']}).then(s=>{renderer.xr.setSession(s);xr=true;pitchG.position.set(0,0,0);pitchG.rotation.set(0,0,0);camera.position.set(0,0,0);begin()}).catch(e=>alert('VR failed: '+e))};
+document.getElementById('bv').onclick=()=>{if(!navigator.xr){alert('WebXR not available in this browser.');return}renderer.xr.setReferenceSpaceType('local-floor');navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local-floor','hand-tracking']}).then(s=>{renderer.xr.setSession(s);xr=true;pitchG.position.set(0,0,0);pitchG.rotation.set(0,0,0);camera.position.set(0,0,0);begin()}).catch(e=>alert('VR failed: '+e))};
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
 /* ---------- LOCOMOTION ---------- */
-function locoVR(dt){const s=rig.scale.x;if(frozenT>0&&E0.monster&&st==='round'){vel.set(0,0,0);return}let n=0;const av=new T.Vector3();
- for(let k=0;k<2;k++){const c=ctrl[k];if(!c)continue;const h=E0.hands[k],dl=c.position.clone().sub(h.lp).multiplyScalar(s);h.lp.copy(c.position);if(dt<=0)continue;
-  rig.updateMatrixWorld(true);c.getWorldPosition(_a);const p=_a.clone(),o=new T.Vector3();
-  if(pushOut(p,.1*s,false,o)){rig.position.sub(dl);rig.updateMatrixWorld(true);c.getWorldPosition(_a);o.set(0,0,0);if(pushOut(_a,.1*s,false,o))rig.position.add(o);av.addScaledVector(dl,-1/dt);n++;if(!h.contact)sfx.slap(_a);h.contact=true}else h.contact=false}
- if(n){av.divideScalar(n).clampLength(0,10);vel.lerp(av,.5)}else{vel.y-=9.8*dt;rig.position.addScaledVector(vel,dt)}
- if(rig.position.y<0){rig.position.y=0;if(vel.y<0)vel.y=0}}
+/* gorilla-tag locomotion ported from the Bowser game: long arms, planted-hand push-off, grip-grab hand-over-hand climbing, body collision, momentum, snap turn */
+const ARM_SCALE=1.55,BODYS=[[0,.2],[-.3,.2],[-.6,.2]];
+const GH=[0,1].map(()=>({pl:new T.Vector3(),has:false,lat:false,anc:new T.Vector3(),was:false,touch:false,sl:new T.Vector3()}));
+const velS=new T.Vector3(),_gm=new T.Vector3(),_gm2=new T.Vector3(),_gw=new T.Vector3(),_ghw=new T.Vector3(),_go=new T.Vector3(),_gd=new T.Vector3();let wasLat=false;const snapR=[true,true];
+function slHand(k){const g=GH[k];_gd.copy(camera.position);_gd.y-=.2;return g.sl.copy(ctrl[k].position).sub(_gd).multiplyScalar(ARM_SCALE).add(_gd)}
+function handVis(k){_gw.copy(slHand(k)).applyMatrix4(rig.matrixWorld);_go.set(0,0,0);pushOut(_gw,.09*rig.scale.x,false,_go);return _gw}
+function snapTurn(a){rig.updateMatrixWorld(true);camera.getWorldPosition(_gd);const hx=_gd.x,hz=_gd.z;rig.rotation.y+=a;rig.updateMatrixWorld(true);camera.getWorldPosition(_gd);rig.position.x+=hx-_gd.x;rig.position.z+=hz-_gd.z}
+function locoVR(dt){const s=rig.scale.x;rig.updateMatrixWorld(true);
+ if(frozenT>0&&E0.monster&&st==='round'){vel.set(0,0,0);velS.set(0,0,0);GH.forEach(g=>{g.has=false;g.lat=false});wasLat=false;return}
+ if(dt<=0)return;
+ _gm.set(0,0,0);_gm2.set(0,0,0);let n=0,nl=0,ns=0;
+ for(let k=0;k<2;k++){const c=ctrl[k];if(!c)continue;const g=GH[k],eh=E0.hands[k],l=slHand(k);if(!g.has){g.pl.copy(l);g.has=true}
+  _ghw.copy(l).applyMatrix4(rig.matrixWorld);_gw.copy(_ghw);_go.set(0,0,0);g.touch=pushOut(_gw,.1*s,false,_go);g.sup=g.touch&&_go.y>.5*_go.length();
+  const grip=eh.press&&!eh.held;if(!grip&&g.lat)g.lat=false;
+  if(grip&&!g.lat&&g.touch){g.lat=true;g.anc.copy(_gw);sfx.slap(_gw);buzz(k,.7,60)}
+  if(g.lat){_gd.copy(g.anc).sub(_ghw);_gm2.add(_gd);nl++}
+  else if(g.touch){_gd.copy(l).sub(g.pl).multiplyScalar(s);if(_gd.length()>.4*s)_gd.setLength(.4*s);_gd.applyQuaternion(rig.quaternion);_gm.sub(_gd);n++;if(g.sup)ns++;
+   if(!g.was){const sp=_gd.length()/Math.max(dt,.001);sfx.slap(_gw);buzz(k,Math.min(1,.2+sp*.08),40)}}
+  g.was=g.touch;g.pl.copy(l)}
+ if(nl>0){/* GRABBING: latched hands stay fixed in the world, your body moves (hand-over-hand climbing, two hands, pinch) */
+  _gm2.multiplyScalar(1/nl);if(_gm2.length()>s)_gm2.setLength(s);rig.position.add(_gm2);_gd.copy(_gm2).divideScalar(Math.max(dt,1/144));velS.lerp(_gd,.4);vel.set(0,0,0);wasLat=true}
+ else{if(wasLat){wasLat=false;vel.copy(velS).clampLength(0,14)}
+  if(n>0){_gm.multiplyScalar(1/n);rig.position.add(_gm);_gd.copy(_gm).divideScalar(Math.max(dt,1/144));velS.lerp(_gd,.6);
+   if(ns>0)vel.copy(velS).clampLength(0,14);/* standing/pushing on the floor */
+   else{vel.x=velS.x;vel.z=velS.z;vel.y-=9.8*dt;if(velS.y>.5&&velS.y>vel.y)vel.y=velS.y;else rig.position.y+=vel.y*dt;vel.clampLength(0,16)}/* wall/ceiling: push off it, but gravity still pulls you down (grab with grip to hang) */}
+  else{vel.y-=9.8*dt;vel.multiplyScalar(1-.08*dt);vel.clampLength(0,16);rig.position.addScaledVector(vel,dt);velS.copy(vel)}}
+ /* body collision (head / chest / hip spheres) */
+ let grounded=false;
+ for(let pass=0;pass<3;pass++){rig.updateMatrixWorld(true);camera.getWorldPosition(_ghw);let moved=false;
+  for(const bs of BODYS){_gw.set(_ghw.x,_ghw.y+bs[0]*s,_ghw.z);_go.set(0,0,0);
+   if(pushOut(_gw,bs[1]*s,false,_go)){rig.position.add(_go);_ghw.add(_go);moved=true;const ln=_go.length();
+    if(ln>1e-6){const nx=_go.x/ln,ny=_go.y/ln,nz=_go.z/ln,vn=vel.x*nx+vel.y*ny+vel.z*nz;if(vn<0){vel.x-=vn*nx;vel.y-=vn*ny;vel.z-=vn*nz}if(ny>.5)grounded=true}}}
+  if(!moved)break}
+ if(grounded&&!n&&!nl){const f=Math.max(0,1-6*dt);vel.x*=f;vel.z*=f}
+ /* snap turn (thumbstick) */
+ for(let k=0;k<2;k++){const c=ctrl[k],gp=c&&c.userData.src&&c.userData.src.gamepad;if(!gp||!gp.axes||gp.axes.length<4)continue;const x=gp.axes[2];if(Math.abs(x)<.4)snapR[k]=true;else if(snapR[k]&&Math.abs(x)>.7){snapR[k]=false;snapTurn(x>0?-Math.PI/6:Math.PI/6)}}}
 function locoDesk(dt){if(frozenT>0&&E0.monster&&st==='round')return;const s=rig.scale.x,sp=(keys.ShiftLeft?9:6)*(E0.monster?1.2:1);let f=(keys.KeyW?1:0)-(keys.KeyS?1:0),r=(keys.KeyD?1:0)-(keys.KeyA?1:0);if(compFocus)f=r=0;
  const y=rig.rotation.y,tx=(-Math.sin(y)*f+Math.cos(y)*r)*sp,tz=(-Math.cos(y)*f-Math.sin(y)*r)*sp,k=Math.min(1,dt*10);vel.x+=(tx-vel.x)*k;vel.z+=(tz-vel.z)*k;
  const gh=floorAt(rig.position.x,rig.position.z,rig.position.y+.5),onG=rig.position.y<=gh+.03;if(onG){rig.position.y=gh;if(vel.y<0)vel.y=0;if(keys.Space&&!compFocus)vel.y=6.5*Math.sqrt(s)}else vel.y-=9.8*dt;
@@ -273,11 +303,11 @@ function updLocal(dt){const e=E0;e.pos.copy(rig.position);e.s=rig.scale.x;
  if(xr)locoVR(dt);else locoDesk(dt);const L=e.inLobby?lobbyLoc:loc,dx=rig.position.x-L.c.x,dz=rig.position.z-L.c.z,d=Math.hypot(dx,dz);if(d>L.r){rig.position.x=L.c.x+dx/d*L.r;rig.position.z=L.c.z+dz/d*L.r}
  if(!xr){_a.copy(rig.position);_a.y+=1.6*rig.scale.x;_b.set(0,0,0);if(pushOut(_a,.15,true,_b))rig.position.add(_b)}
  rig.updateMatrixWorld(true);
- e.hands.forEach((h,k)=>{if(xr&&ctrl[k])ctrl[k].getWorldPosition(h.pos);else{const pull=keys.KeyF?-.25:-.85;pitchG.localToWorld(h.pos.set(k?.4:-.4,-.35,pull))}if(dt>0)h.vel.copy(h.pos).sub(h.prev).divideScalar(dt);h.prev.copy(h.pos);h.cool=Math.max(0,h.cool-dt)});
+ e.hands.forEach((h,k)=>{if(xr&&ctrl[k])h.pos.copy(handVis(k));else{const pull=keys.KeyF?-.25:-.85;pitchG.localToWorld(h.pos.set(k?.4:-.4,-.35,pull))}if(dt>0)h.vel.copy(h.pos).sub(h.prev).divideScalar(dt);h.prev.copy(h.pos);h.cool=Math.max(0,h.cool-dt)});
  if(!xr){camera.position.set(0,0,third?3:0)}
  if(e.alive){if(e.monster&&st==='round'&&frozenT<=0)e.hands.forEach(h=>grabLogic(e,h));else e.hands.forEach(h=>{if(h.held)release(h)})}
  if(e.alive){const hp=xr?camera.getWorldPosition(_a):pitchG.getWorldPosition(_a);camera.getWorldDirection(_b);const yaw=Math.atan2(_b.x,_b.z);e.yaw=yaw;const s=e.s;e.root.scale.setScalar(s);e.root.rotation.y=yaw;e.root.position.set(hp.x-Math.sin(yaw)*.1*s,hp.y-1.62*s,hp.z-Math.cos(yaw)*.1*s);e.root.updateMatrixWorld(true);
-  e.parts.head.obj.visible=third;e.hands.forEach((h,k)=>{const p=e.parts[k?'armR':'armL'];if(p.chunk)return;ikArm(p,e.root.worldToLocal(_v.copy(h.pos)))})}
+  e.parts.head.obj.visible=third;e.hands.forEach((h,k)=>{const p=e.parts[k?'armR':'armL'];if(p.chunk)return;if(xr&&e.local)p.l1=p.l2=(e.monster?.62:.52)*ARM_SCALE;ikArm(p,e.root.worldToLocal(_v.copy(h.pos)))})}
  else if(e.deadT>0){e.deadT-=dt;if(e.deadT<=0){e.inLobby=true;rig.scale.setScalar(1);rig.position.set(0,0,9);vel.set(0,0,0)}}}
 /* ---------- BOTS ---------- */
 function botUpdate(e,dt){if(!e.alive)return;const s=e.s;let want=null,sp=0,flee=false;
